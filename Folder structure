@@ -1,0 +1,8 @@
+UserAuth/
+│
+├── main.cpp          # Main C++ logic (menu, login/signup)
+├── auth.c            # C code for hashing & validation
+├── auth.h            # Header for auth.c
+├── database.sql      # SQL schema
+├── build.sh          # Simple compile script
+└── users.db          # SQLite database file (auto-created)
