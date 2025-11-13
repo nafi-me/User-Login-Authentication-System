@@ -2,16 +2,40 @@
 #include <sqlite3.h>
 #include <string>
 #include <cstring>
+#include <regex>
 extern "C" {
 #include "auth.h"
 }
 
 using namespace std;
 
-// Execute SQL command (no return)
-bool executeSQL(sqlite3 *db, const string &sql) {
+// Function to validate username and password
+bool validateInput(const string &input, const string &type) {
+    if (input.empty()) {
+        cout << "❌ " << type << " cannot be empty.\n";
+        return false;
+    }
+    if (input.length() < 3) {
+        cout << "❌ " << type << " must be at least 3 characters long.\n";
+        return false;
+    }
+    if (!regex_match(input, regex("^[a-zA-Z0-9_]+$"))) {
+        cout << "❌ " << type << " can only contain letters, numbers, and underscores.\n";
+        return false;
+    }
+    return true;
+}
+
+// --- Create users table ---
+bool setupDatabase(sqlite3 *db) {
+    const char *sql =
+        "CREATE TABLE IF NOT EXISTS users ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "username TEXT UNIQUE,"
+        "password_hash TEXT);";
+
     char *errMsg = 0;
-    if (sqlite3_exec(db, sql.c_str(), 0, 0, &errMsg) != SQLITE_OK) {
+    if (sqlite3_exec(db, sql, 0, 0, &errMsg) != SQLITE_OK) {
         cerr << "SQL error: " << errMsg << endl;
         sqlite3_free(errMsg);
         return false;
@@ -19,56 +43,61 @@ bool executeSQL(sqlite3 *db, const string &sql) {
     return true;
 }
 
-// Check if user exists
-bool userExists(sqlite3 *db, const string &username) {
-    string query = "SELECT COUNT(*) FROM users WHERE username='" + username + "';";
-    sqlite3_stmt *stmt;
-    int count = 0;
-
-    if (sqlite3_prepare_v2(db, query.c_str(), -1, &stmt, NULL) == SQLITE_OK) {
-        if (sqlite3_step(stmt) == SQLITE_ROW)
-            count = sqlite3_column_int(stmt, 0);
-    }
-    sqlite3_finalize(stmt);
-    return count > 0;
-}
-
+// --- Signup function ---
 void signup(sqlite3 *db) {
-    string username, password;
-    cout << "Enter new username: ";
-    cin >> username;
+    string username;
+    char password[100], confirm[100], hash[65];
 
-    if (userExists(db, username)) {
-        cout << "Username already exists!\n";
+    cout << "\nEnter new username: ";
+    cin >> username;
+    if (!validateInput(username, "Username")) return;
+
+    cout << "Enter password: ";
+    get_hidden_input(password, 100);
+
+    cout << "Confirm password: ";
+    get_hidden_input(confirm, 100);
+
+    if (strcmp(password, confirm) != 0) {
+        cout << "❌ Passwords do not match.\n";
         return;
     }
 
-    cout << "Enter password: ";
-    cin >> password;
+    if (!validateInput(password, "Password")) return;
 
-    char hash[65];
-    hash_password(password.c_str(), hash);
+    hash_password(password, hash);
 
-    string sql = "INSERT INTO users (username, password_hash) VALUES ('" + username + "', '" + string(hash) + "');";
-
-    if (executeSQL(db, sql))
-        cout << "Signup successful!\n";
+    sqlite3_stmt *stmt;
+    const char *sql = "INSERT INTO users (username, password_hash) VALUES (?, ?);";
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, 0) == SQLITE_OK) {
+        sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, hash, -1, SQLITE_STATIC);
+        if (sqlite3_step(stmt) == SQLITE_DONE)
+            cout << "✅ Signup successful!\n";
+        else
+            cout << "❌ Username already exists.\n";
+    }
+    sqlite3_finalize(stmt);
 }
 
+// --- Login function ---
 void login(sqlite3 *db) {
-    string username, password;
-    cout << "Enter username: ";
+    string username;
+    char password[100], hash[65];
+
+    cout << "\nEnter username: ";
     cin >> username;
+
     cout << "Enter password: ";
-    cin >> password;
+    get_hidden_input(password, 100);
 
-    char hash[65];
-    hash_password(password.c_str(), hash);
+    hash_password(password, hash);
 
-    string query = "SELECT * FROM users WHERE username='" + username + "' AND password_hash='" + string(hash) + "';";
     sqlite3_stmt *stmt;
-
-    if (sqlite3_prepare_v2(db, query.c_str(), -1, &stmt, NULL) == SQLITE_OK) {
+    const char *sql = "SELECT * FROM users WHERE username=? AND password_hash=?;";
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, 0) == SQLITE_OK) {
+        sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, hash, -1, SQLITE_STATIC);
         if (sqlite3_step(stmt) == SQLITE_ROW)
             cout << "✅ Login successful! Welcome, " << username << "!\n";
         else
@@ -80,21 +109,22 @@ void login(sqlite3 *db) {
 int main() {
     sqlite3 *db;
     if (sqlite3_open("users.db", &db)) {
-        cerr << "Can't open database.\n";
+        cerr << "❌ Can't open database.\n";
         return 1;
     }
 
-    executeSQL(db, "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password_hash TEXT);");
+    setupDatabase(db);
 
     int choice;
     do {
-        cout << "\n===== User Authentication System =====\n";
+        cout << "\n===== 🔐 User Authentication System =====\n";
         cout << "1. Sign Up\n2. Login\n3. Exit\nChoose: ";
         cin >> choice;
+
         switch (choice) {
             case 1: signup(db); break;
             case 2: login(db); break;
-            case 3: cout << "Goodbye!\n"; break;
+            case 3: cout << "👋 Goodbye!\n"; break;
             default: cout << "Invalid choice!\n";
         }
     } while (choice != 3);
